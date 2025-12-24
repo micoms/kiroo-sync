@@ -95,6 +95,7 @@ export const manga = pgTable(
             .notNull(),
         // Source identification
         source: bigint("source", { mode: "number" }).notNull(),
+        sourceName: text("source_name"),
         url: text("url").notNull(),
         // Manga info
         title: text("title").notNull(),

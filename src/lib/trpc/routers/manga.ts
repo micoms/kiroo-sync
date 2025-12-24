@@ -130,6 +130,39 @@ export const mangaRouter = router({
         };
     }),
 
+    // Reading History
+    readingHistory: protectedProcedure
+        .input(z.object({
+            limit: z.number().min(1).max(100).default(50),
+            offset: z.number().min(0).default(0),
+        }))
+        .query(async ({ ctx, input }) => {
+            const userId = ctx.session.user.id;
+
+            const items = await ctx.db
+                .select({
+                    historyId: history.id,
+                    lastRead: history.lastRead,
+                    readDuration: history.readDuration,
+                    chapterUrl: history.chapterUrl,
+                    chapterName: chapters.name,
+                    chapterNumber: chapters.chapterNumber,
+                    mangaId: manga.id,
+                    mangaTitle: manga.title,
+                    mangaThumbnail: manga.thumbnailUrl,
+                    sourceName: manga.sourceName,
+                })
+                .from(history)
+                .innerJoin(manga, eq(history.mangaId, manga.id))
+                .leftJoin(chapters, and(eq(chapters.url, history.chapterUrl), eq(chapters.mangaId, manga.id)))
+                .where(eq(manga.userId, userId))
+                .orderBy(desc(history.lastRead))
+                .limit(input.limit)
+                .offset(input.offset);
+
+            return items;
+        }),
+
     // Delete manga
     delete: protectedProcedure
         .input(z.object({ id: z.string().uuid() }))

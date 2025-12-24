@@ -47,6 +47,17 @@ export async function POST(request: NextRequest) {
         const userId = keyRecord.userId;
         const backup = body.backup || body; // Handle wrapped or unwrapped
         const mangaList = backup.backupManga || backup.manga || [];
+        const backupSources = backup.backupSources || []; // Extract sources
+
+        // Create source map
+        const sourceMap = new Map<number, string>();
+        if (Array.isArray(backupSources)) {
+            for (const s of backupSources) {
+                if (s.sourceId && s.name) {
+                    sourceMap.set(Number(s.sourceId), s.name);
+                }
+            }
+        }
 
         console.log("Sync request received. Manga count:", mangaList?.length);
 
@@ -83,6 +94,7 @@ export async function POST(request: NextRequest) {
                                 chapterFlags: m.chapterFlags ?? 0,
                                 lastModifiedAt: new Date(),
                                 version: existing.version + 1,
+                                sourceName: sourceMap.get(Number(m.source)) || existing.sourceName,
                             })
                             .where(eq(manga.id, existing.id));
                         mangaId = existing.id;
@@ -91,6 +103,7 @@ export async function POST(request: NextRequest) {
                             .values({
                                 userId,
                                 source: m.source,
+                                sourceName: sourceMap.get(Number(m.source)),
                                 url: m.url,
                                 title: m.title,
                                 artist: m.artist,
