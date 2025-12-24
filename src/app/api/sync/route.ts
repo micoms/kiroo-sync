@@ -45,12 +45,17 @@ export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
         const userId = keyRecord.userId;
+        const backup = body.backup || body; // Handle wrapped or unwrapped
+        const mangaList = backup.backupManga || backup.manga || [];
+
+        console.log("Sync request received. Manga count:", mangaList?.length);
+
         let mangaSynced = 0;
         let chaptersSynced = 0;
 
         // Process manga
-        if (body.manga && Array.isArray(body.manga)) {
-            for (const m of body.manga) {
+        if (Array.isArray(mangaList)) {
+            for (const m of mangaList) {
                 const existing = await db.query.manga.findFirst({
                     where: and(
                         eq(manga.userId, userId),
