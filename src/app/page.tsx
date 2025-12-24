@@ -1,65 +1,194 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { DashboardLayout } from "@/components/dashboard/layout";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Book, BookOpen, CheckCircle, Clock, RefreshCw, Loader2 } from "lucide-react";
+import { trpc } from "@/lib/trpc/client";
+import { formatDistanceToNow } from "date-fns";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useSession } from "@/lib/auth-client";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
+export default function DashboardPage() {
+  const router = useRouter();
+  const { data: session, isPending: sessionLoading } = useSession();
+
+  useEffect(() => {
+    if (!sessionLoading && !session) {
+      router.push("/login");
+    }
+  }, [session, sessionLoading, router]);
+
+  const { data: stats, isLoading: statsLoading } = trpc.manga.stats.useQuery(undefined, {
+    enabled: !!session,
+  });
+  const { data: syncStatus, isLoading: syncLoading } = trpc.sync.status.useQuery(undefined, {
+    enabled: !!session,
+  });
+  const { data: recentHistory } = trpc.sync.history.useQuery({ limit: 5 }, {
+    enabled: !!session,
+  });
+
+  // Show loading while checking session
+  if (sessionLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Don't render dashboard if not authenticated
+  if (!session) {
+    return null;
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome to Kiroo Sync - your manga synchronization hub
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Stats Grid */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Manga</CardTitle>
+              <Book className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-8 w-16" />
+              ) : (
+                <div className="text-2xl font-bold">{stats?.totalManga ?? 0}</div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {stats?.favoriteManga ?? 0} favorites
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Chapters Read</CardTitle>
+              <BookOpen className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-8 w-16" />
+              ) : (
+                <div className="text-2xl font-bold">{stats?.readChapters ?? 0}</div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                of {stats?.totalChapters ?? 0} total chapters
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Completion Rate</CardTitle>
+              <CheckCircle className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {statsLoading ? (
+                <Skeleton className="h-8 w-16" />
+              ) : (
+                <div className="text-2xl font-bold">
+                  {stats?.completionRate?.toFixed(1) ?? 0}%
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">reading progress</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Last Sync</CardTitle>
+              <RefreshCw className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              {syncLoading ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                <div className="text-2xl font-bold">
+                  {syncStatus?.lastSync
+                    ? formatDistanceToNow(syncStatus.lastSync, { addSuffix: true })
+                    : "Never"}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                <Badge
+                  variant={syncStatus?.status === "success" ? "default" : "secondary"}
+                  className="mt-1"
+                >
+                  {syncStatus?.status ?? "No syncs yet"}
+                </Badge>
+              </p>
+            </CardContent>
+          </Card>
         </div>
-      </main>
-    </div>
+
+        {/* Recent Sync Activity */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5" />
+              Recent Sync Activity
+            </CardTitle>
+            <CardDescription>Your recent synchronization history</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!recentHistory || recentHistory.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <RefreshCw className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>No sync activity yet</p>
+                <p className="text-sm">Generate an API key and sync from your device to get started</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {recentHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between border-b pb-4 last:border-0 last:pb-0"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`h-2 w-2 rounded-full ${item.status === "success"
+                          ? "bg-green-500"
+                          : item.status === "failed"
+                            ? "bg-red-500"
+                            : "bg-yellow-500"
+                          }`}
+                      />
+                      <div>
+                        <p className="font-medium capitalize">{item.syncType} Sync</p>
+                        <p className="text-sm text-muted-foreground">
+                          {item.deviceName ?? "Unknown device"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm">
+                        {item.mangaSynced} manga, {item.chaptersSynced} chapters
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(item.createdAt, { addSuffix: true })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
   );
 }
