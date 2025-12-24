@@ -488,8 +488,11 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         console.error("Sync push error:", error);
+        if (error instanceof Error) {
+            console.error("Stack:", error.stack);
+        }
         return NextResponse.json(
-            { error: "Sync failed", details: error instanceof Error ? error.message : "Unknown" },
+            { error: "Sync failed", details: error instanceof Error ? error.message : String(error) },
             { status: 500 }
         );
     }
