@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { db } from "@/lib/db";
-import { apiKeys, manga, chapters, categories, tracking, history, syncHistory } from "@/lib/db/schema";
+import {
+    apiKeys, manga, chapters, categories, tracking, history, syncHistory,
+    mangaCategories, preferences, sourcePreferences, extensionRepos, savedSearches, feeds
+} from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
 // Sync endpoint for mobile clients using REST API
-// Compatible with Tachiyomi/Mihon sync format
+// Compatible with Tachiyomi/Mihon/Komikku sync format
 
 async function validateApiKey(request: NextRequest) {
     const apiKey = request.headers.get("x-api-key");
@@ -46,10 +49,18 @@ export async function POST(request: NextRequest) {
         const body = await request.json();
         const userId = keyRecord.userId;
         const backup = body.backup || body; // Handle wrapped or unwrapped
-        const mangaList = backup.backupManga || backup.manga || [];
-        const backupSources = backup.backupSources || []; // Extract sources
 
-        // Create source map
+        // Extract all backup components
+        const mangaList = backup.backupManga || backup.manga || [];
+        const backupSources = backup.backupSources || [];
+        const backupCategories = backup.backupCategories || [];
+        const backupPreferences = backup.backupPreferences || [];
+        const backupSourcePreferences = backup.backupSourcePreferences || [];
+        const backupExtensionRepo = backup.backupExtensionRepo || [];
+        const backupSavedSearches = backup.backupSavedSearches || [];
+        const backupFeeds = backup.backupFeeds || [];
+
+        // Create source map for name lookup
         const sourceMap = new Map<number, string>();
         if (Array.isArray(backupSources)) {
             for (const s of backupSources) {
@@ -59,12 +70,55 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        console.log("Sync request received. Manga count:", mangaList?.length);
+        console.log("Sync request received:", {
+            manga: mangaList?.length,
+            categories: backupCategories?.length,
+            preferences: backupPreferences?.length,
+            extensionRepos: backupExtensionRepo?.length,
+            savedSearches: backupSavedSearches?.length,
+            feeds: backupFeeds?.length,
+        });
 
         let mangaSynced = 0;
         let chaptersSynced = 0;
 
-        // Process manga
+        // ============================================================================
+        // Process Categories
+        // ============================================================================
+        const categoryMap = new Map<number, string>(); // order -> categoryId
+        if (Array.isArray(backupCategories)) {
+            for (const c of backupCategories) {
+                const existing = await db.query.categories.findFirst({
+                    where: and(eq(categories.userId, userId), eq(categories.name, c.name)),
+                });
+
+                if (existing) {
+                    await db.update(categories)
+                        .set({
+                            order: c.order ?? existing.order,
+                            flags: c.flags ?? existing.flags,
+                            mangaSort: c.mangaSort,
+                        })
+                        .where(eq(categories.id, existing.id));
+                    categoryMap.set(c.order ?? 0, existing.id);
+                } else {
+                    const [inserted] = await db.insert(categories)
+                        .values({
+                            userId,
+                            name: c.name,
+                            order: c.order ?? 0,
+                            flags: c.flags ?? 0,
+                            mangaSort: c.mangaSort,
+                        })
+                        .returning();
+                    categoryMap.set(c.order ?? 0, inserted.id);
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Manga
+        // ============================================================================
         const failedManga: string[] = [];
         if (Array.isArray(mangaList)) {
             for (const m of mangaList) {
@@ -78,6 +132,9 @@ export async function POST(request: NextRequest) {
                     });
 
                     let mangaId: string;
+                    const genresArray = Array.isArray(m.genres) ? m.genres :
+                        (Array.isArray(m.genre) ? m.genre :
+                            (typeof m.genre === "string" ? m.genre.split(", ") : []));
 
                     if (existing) {
                         await db.update(manga)
@@ -86,12 +143,26 @@ export async function POST(request: NextRequest) {
                                 artist: m.artist,
                                 author: m.author,
                                 description: m.description,
-                                genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
+                                genres: genresArray,
                                 status: m.status ?? 0,
                                 thumbnailUrl: m.thumbnailUrl,
                                 favorite: m.favorite ?? true,
                                 viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
                                 chapterFlags: m.chapterFlags ?? 0,
+                                updateStrategy: m.updateStrategy ?? "ALWAYS_UPDATE",
+                                // New fields
+                                notes: m.notes ?? existing.notes,
+                                excludedScanlators: m.excludedScanlators ?? existing.excludedScanlators,
+                                initialized: m.initialized ?? existing.initialized,
+                                favoriteModifiedAt: m.favoriteModifiedAt ? new Date(m.favoriteModifiedAt) : existing.favoriteModifiedAt,
+                                customTitle: m.customTitle ?? existing.customTitle,
+                                customArtist: m.customArtist ?? existing.customArtist,
+                                customAuthor: m.customAuthor ?? existing.customAuthor,
+                                customDescription: m.customDescription ?? existing.customDescription,
+                                customGenres: m.customGenre ?? existing.customGenres,
+                                customStatus: m.customStatus ?? existing.customStatus,
+                                customThumbnailUrl: m.customThumbnailUrl ?? existing.customThumbnailUrl,
+                                // Sync metadata
                                 lastModifiedAt: new Date(),
                                 version: existing.version + 1,
                                 sourceName: sourceMap.get(Number(m.source)) || existing.sourceName,
@@ -109,18 +180,47 @@ export async function POST(request: NextRequest) {
                                 artist: m.artist,
                                 author: m.author,
                                 description: m.description,
-                                genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
+                                genres: genresArray,
                                 status: m.status ?? 0,
                                 thumbnailUrl: m.thumbnailUrl,
                                 favorite: m.favorite ?? true,
                                 dateAdded: m.dateAdded ? new Date(m.dateAdded) : new Date(),
                                 viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
                                 chapterFlags: m.chapterFlags ?? 0,
+                                updateStrategy: m.updateStrategy ?? "ALWAYS_UPDATE",
+                                // New fields
+                                notes: m.notes,
+                                excludedScanlators: m.excludedScanlators,
+                                initialized: m.initialized ?? false,
+                                favoriteModifiedAt: m.favoriteModifiedAt ? new Date(m.favoriteModifiedAt) : null,
+                                customTitle: m.customTitle,
+                                customArtist: m.customArtist,
+                                customAuthor: m.customAuthor,
+                                customDescription: m.customDescription,
+                                customGenres: m.customGenre,
+                                customStatus: m.customStatus ?? 0,
+                                customThumbnailUrl: m.customThumbnailUrl,
                             })
                             .returning();
                         mangaId = inserted.id;
                     }
                     mangaSynced++;
+
+                    // Process manga categories
+                    if (m.categories && Array.isArray(m.categories)) {
+                        // Delete existing manga-category links
+                        await db.delete(mangaCategories).where(eq(mangaCategories.mangaId, mangaId));
+
+                        // Create new links
+                        for (const catOrder of m.categories) {
+                            const categoryId = categoryMap.get(Number(catOrder));
+                            if (categoryId) {
+                                await db.insert(mangaCategories)
+                                    .values({ mangaId, categoryId })
+                                    .onConflictDoNothing();
+                            }
+                        }
+                    }
 
                     // Process chapters
                     if (m.chapters && Array.isArray(m.chapters)) {
@@ -135,31 +235,236 @@ export async function POST(request: NextRequest) {
                             if (existingChapter) {
                                 await db.update(chapters)
                                     .set({
-                                        read: ch.read ?? false,
-                                        bookmark: ch.bookmark ?? false,
-                                        lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? 0,
+                                        name: ch.name ?? existingChapter.name,
+                                        read: ch.read ?? existingChapter.read,
+                                        bookmark: ch.bookmark ?? existingChapter.bookmark,
+                                        lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? existingChapter.lastPageRead,
+                                        sourceOrder: ch.sourceOrder ?? existingChapter.sourceOrder,
+                                        dateFetch: ch.dateFetch ? new Date(ch.dateFetch) : existingChapter.dateFetch,
+                                        dateUpload: ch.dateUpload ? new Date(ch.dateUpload) : existingChapter.dateUpload,
                                         lastModifiedAt: new Date(),
+                                        version: (existingChapter.version ?? 0) + 1,
                                     })
                                     .where(eq(chapters.id, existingChapter.id));
                             } else {
                                 await db.insert(chapters).values({
                                     mangaId,
                                     url: ch.url,
-                                    name: ch.name,
+                                    name: ch.name ?? "",
                                     scanlator: ch.scanlator,
                                     chapterNumber: ch.chapterNumber ?? ch.chapter_number ?? 0,
+                                    sourceOrder: ch.sourceOrder ?? 0,
                                     read: ch.read ?? false,
                                     bookmark: ch.bookmark ?? false,
                                     lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? 0,
                                     pagesLeft: ch.pagesLeft ?? ch.pages_left ?? 0,
+                                    dateFetch: ch.dateFetch ? new Date(ch.dateFetch) : null,
+                                    dateUpload: ch.dateUpload ? new Date(ch.dateUpload) : null,
                                 });
                             }
                             chaptersSynced++;
                         }
                     }
+
+                    // Process tracking
+                    if (m.tracking && Array.isArray(m.tracking)) {
+                        for (const t of m.tracking) {
+                            const existingTrack = await db.query.tracking.findFirst({
+                                where: and(
+                                    eq(tracking.mangaId, mangaId),
+                                    eq(tracking.syncId, t.syncId)
+                                ),
+                            });
+
+                            const mediaId = t.mediaId ?? t.mediaIdInt ?? 0;
+
+                            if (existingTrack) {
+                                await db.update(tracking)
+                                    .set({
+                                        mediaId,
+                                        libraryId: t.libraryId,
+                                        title: t.title,
+                                        trackingUrl: t.trackingUrl,
+                                        lastChapterRead: t.lastChapterRead ?? 0,
+                                        totalChapters: t.totalChapters ?? 0,
+                                        score: t.score ?? 0,
+                                        status: t.status ?? 0,
+                                        startedReadingDate: t.startedReadingDate ? new Date(t.startedReadingDate) : null,
+                                        finishedReadingDate: t.finishedReadingDate ? new Date(t.finishedReadingDate) : null,
+                                        private: t.private ?? false,
+                                    })
+                                    .where(eq(tracking.id, existingTrack.id));
+                            } else {
+                                await db.insert(tracking).values({
+                                    mangaId,
+                                    syncId: t.syncId,
+                                    mediaId,
+                                    libraryId: t.libraryId,
+                                    title: t.title,
+                                    trackingUrl: t.trackingUrl,
+                                    lastChapterRead: t.lastChapterRead ?? 0,
+                                    totalChapters: t.totalChapters ?? 0,
+                                    score: t.score ?? 0,
+                                    status: t.status ?? 0,
+                                    startedReadingDate: t.startedReadingDate ? new Date(t.startedReadingDate) : null,
+                                    finishedReadingDate: t.finishedReadingDate ? new Date(t.finishedReadingDate) : null,
+                                    private: t.private ?? false,
+                                });
+                            }
+                        }
+                    }
+
+                    // Process history
+                    if (m.history && Array.isArray(m.history)) {
+                        for (const h of m.history) {
+                            const chapterUrl = h.url || h.chapterUrl;
+                            if (!chapterUrl) continue;
+
+                            const existingHistory = await db.query.history.findFirst({
+                                where: and(
+                                    eq(history.mangaId, mangaId),
+                                    eq(history.chapterUrl, chapterUrl)
+                                ),
+                            });
+
+                            if (existingHistory) {
+                                await db.update(history)
+                                    .set({
+                                        lastRead: new Date(h.lastRead),
+                                        readDuration: h.readDuration ?? 0,
+                                    })
+                                    .where(eq(history.id, existingHistory.id));
+                            } else {
+                                await db.insert(history).values({
+                                    mangaId,
+                                    chapterUrl,
+                                    lastRead: new Date(h.lastRead),
+                                    readDuration: h.readDuration ?? 0,
+                                });
+                            }
+                        }
+                    }
+
                 } catch (e) {
                     console.error(`Failed to process manga ${m.title}:`, e);
                     failedManga.push(m.title);
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Preferences
+        // ============================================================================
+        if (Array.isArray(backupPreferences)) {
+            for (const p of backupPreferences) {
+                const existing = await db.query.preferences.findFirst({
+                    where: and(eq(preferences.userId, userId), eq(preferences.key, p.key)),
+                });
+
+                if (existing) {
+                    await db.update(preferences)
+                        .set({ value: p.value, type: p.value?.type || "string" })
+                        .where(eq(preferences.id, existing.id));
+                } else {
+                    await db.insert(preferences).values({
+                        userId,
+                        key: p.key,
+                        value: p.value,
+                        type: p.value?.type || "string",
+                    });
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Source Preferences
+        // ============================================================================
+        if (Array.isArray(backupSourcePreferences)) {
+            for (const sp of backupSourcePreferences) {
+                const sourceKey = sp.sourceKey ?? sp.source;
+                if (!sourceKey) continue;
+
+                const existing = await db.query.sourcePreferences.findFirst({
+                    where: and(eq(sourcePreferences.userId, userId), eq(sourcePreferences.sourceId, sourceKey)),
+                });
+
+                if (existing) {
+                    await db.update(sourcePreferences)
+                        .set({ preferences: sp.prefs })
+                        .where(eq(sourcePreferences.id, existing.id));
+                } else {
+                    await db.insert(sourcePreferences).values({
+                        userId,
+                        sourceId: sourceKey,
+                        preferences: sp.prefs,
+                    });
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Extension Repos
+        // ============================================================================
+        if (Array.isArray(backupExtensionRepo)) {
+            for (const repo of backupExtensionRepo) {
+                const existing = await db.query.extensionRepos.findFirst({
+                    where: and(eq(extensionRepos.userId, userId), eq(extensionRepos.baseUrl, repo.baseUrl)),
+                });
+
+                if (!existing && repo.baseUrl && repo.name) {
+                    await db.insert(extensionRepos).values({
+                        userId,
+                        baseUrl: repo.baseUrl,
+                        name: repo.name,
+                        shortName: repo.shortName,
+                        website: repo.website,
+                        signingKeyFingerprint: repo.signingKeyFingerprint,
+                    });
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Saved Searches
+        // ============================================================================
+        if (Array.isArray(backupSavedSearches)) {
+            for (const ss of backupSavedSearches) {
+                const existing = await db.query.savedSearches.findFirst({
+                    where: and(
+                        eq(savedSearches.userId, userId),
+                        eq(savedSearches.name, ss.name),
+                        eq(savedSearches.source, ss.source)
+                    ),
+                });
+
+                if (!existing && ss.name && ss.source) {
+                    await db.insert(savedSearches).values({
+                        userId,
+                        name: ss.name,
+                        source: ss.source,
+                        query: ss.query,
+                        filterList: ss.filterList,
+                    });
+                }
+            }
+        }
+
+        // ============================================================================
+        // Process Feeds
+        // ============================================================================
+        if (Array.isArray(backupFeeds)) {
+            for (const f of backupFeeds) {
+                const existing = await db.query.feeds.findFirst({
+                    where: and(eq(feeds.userId, userId), eq(feeds.source, f.source)),
+                });
+
+                if (!existing && f.source) {
+                    await db.insert(feeds).values({
+                        userId,
+                        source: f.source,
+                        savedSearchId: f.savedSearch,
+                        global: f.global ?? true,
+                    });
                 }
             }
         }
@@ -171,13 +476,15 @@ export async function POST(request: NextRequest) {
             syncType: "push",
             mangaSynced,
             chaptersSynced,
-            status: "success",
+            status: failedManga.length > 0 ? "partial" : "success",
+            errorMessage: failedManga.length > 0 ? `Failed: ${failedManga.join(", ")}` : null,
         });
 
         return NextResponse.json({
             success: true,
             mangaSynced,
             chaptersSynced,
+            failedManga: failedManga.length > 0 ? failedManga : undefined,
         });
     } catch (error) {
         console.error("Sync push error:", error);
@@ -202,18 +509,45 @@ export async function GET(request: NextRequest) {
     try {
         const userId = keyRecord.userId;
 
+        // Fetch all manga with relations
         const mangaList = await db.query.manga.findMany({
             where: eq(manga.userId, userId),
             with: {
                 chapters: true,
                 tracking: true,
                 history: true,
+                mangaCategories: true,
             },
         });
 
+        // Fetch other data
         const categoriesList = await db.query.categories.findMany({
             where: eq(categories.userId, userId),
         });
+
+        const preferencesList = await db.query.preferences.findMany({
+            where: eq(preferences.userId, userId),
+        });
+
+        const sourcePreferencesList = await db.query.sourcePreferences.findMany({
+            where: eq(sourcePreferences.userId, userId),
+        });
+
+        const extensionReposList = await db.query.extensionRepos.findMany({
+            where: eq(extensionRepos.userId, userId),
+        });
+
+        const savedSearchesList = await db.query.savedSearches.findMany({
+            where: eq(savedSearches.userId, userId),
+        });
+
+        const feedsList = await db.query.feeds.findMany({
+            where: eq(feeds.userId, userId),
+        });
+
+        // Build category order map for manga
+        const categoryOrderMap = new Map<string, number>();
+        categoriesList.forEach(c => categoryOrderMap.set(c.id, c.order ?? 0));
 
         // Log sync
         await db.insert(syncHistory).values({
@@ -225,6 +559,14 @@ export async function GET(request: NextRequest) {
             status: "success",
         });
 
+        // Build unique sources list
+        const sourcesSet = new Map<number, string>();
+        mangaList.forEach(m => {
+            if (m.sourceName) {
+                sourcesSet.set(Number(m.source), m.sourceName);
+            }
+        });
+
         return NextResponse.json({
             backupManga: mangaList.map((m) => ({
                 source: m.source,
@@ -233,35 +575,60 @@ export async function GET(request: NextRequest) {
                 artist: m.artist,
                 author: m.author,
                 description: m.description,
-                genre: m.genres?.join(", "),
+                genre: m.genres ?? [],
                 status: m.status,
                 thumbnailUrl: m.thumbnailUrl,
                 favorite: m.favorite,
                 dateAdded: m.dateAdded?.getTime(),
                 viewer_flags: m.viewerFlags,
                 chapterFlags: m.chapterFlags,
+                updateStrategy: m.updateStrategy,
+                // New fields
+                notes: m.notes,
+                excludedScanlators: m.excludedScanlators,
+                initialized: m.initialized,
+                favoriteModifiedAt: m.favoriteModifiedAt?.getTime(),
+                lastModifiedAt: m.lastModifiedAt?.getTime(),
+                version: m.version,
+                // Custom fields
+                customTitle: m.customTitle,
+                customArtist: m.customArtist,
+                customAuthor: m.customAuthor,
+                customDescription: m.customDescription,
+                customGenre: m.customGenres,
+                customStatus: m.customStatus,
+                customThumbnailUrl: m.customThumbnailUrl,
+                // Categories
+                categories: m.mangaCategories?.map(mc => categoryOrderMap.get(mc.categoryId) ?? 0) ?? [],
+                // Related data
                 chapters: m.chapters.map((ch) => ({
                     url: ch.url,
                     name: ch.name,
                     scanlator: ch.scanlator,
                     chapterNumber: ch.chapterNumber,
+                    sourceOrder: ch.sourceOrder,
                     read: ch.read,
                     bookmark: ch.bookmark,
                     lastPageRead: ch.lastPageRead,
                     pagesLeft: ch.pagesLeft,
                     dateFetch: ch.dateFetch?.getTime(),
                     dateUpload: ch.dateUpload?.getTime(),
+                    lastModifiedAt: ch.lastModifiedAt?.getTime(),
+                    version: ch.version,
                 })),
                 tracking: m.tracking.map((t) => ({
                     syncId: t.syncId,
-                    mediaId: Number(t.mediaId),
-                    libraryId: t.libraryId ? Number(t.libraryId) : null,
+                    mediaId: t.mediaId,
+                    libraryId: t.libraryId,
                     title: t.title,
                     trackingUrl: t.trackingUrl,
                     lastChapterRead: t.lastChapterRead,
                     totalChapters: t.totalChapters,
                     score: t.score,
                     status: t.status,
+                    startedReadingDate: t.startedReadingDate?.getTime(),
+                    finishedReadingDate: t.finishedReadingDate?.getTime(),
+                    private: t.private,
                 })),
                 history: m.history.map((h) => ({
                     url: h.chapterUrl,
@@ -274,6 +641,36 @@ export async function GET(request: NextRequest) {
                 order: c.order,
                 flags: c.flags,
                 mangaSort: c.mangaSort,
+            })),
+            backupSources: Array.from(sourcesSet.entries()).map(([sourceId, name]) => ({
+                sourceId,
+                name,
+            })),
+            backupPreferences: preferencesList.map((p) => ({
+                key: p.key,
+                value: p.value,
+            })),
+            backupSourcePreferences: sourcePreferencesList.map((sp) => ({
+                sourceKey: sp.sourceId,
+                prefs: sp.preferences,
+            })),
+            backupExtensionRepo: extensionReposList.map((repo) => ({
+                baseUrl: repo.baseUrl,
+                name: repo.name,
+                shortName: repo.shortName,
+                website: repo.website,
+                signingKeyFingerprint: repo.signingKeyFingerprint,
+            })),
+            backupSavedSearches: savedSearchesList.map((ss) => ({
+                name: ss.name,
+                source: ss.source,
+                query: ss.query,
+                filterList: ss.filterList,
+            })),
+            backupFeeds: feedsList.map((f) => ({
+                source: f.source,
+                savedSearch: f.savedSearchId,
+                global: f.global,
             })),
         });
     } catch (error) {

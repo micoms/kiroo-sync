@@ -118,6 +118,12 @@ export const manga = pgTable(
         customDescription: text("custom_description"),
         customGenres: text("custom_genres").array(),
         customStatus: integer("custom_status").default(0),
+        customThumbnailUrl: text("custom_thumbnail_url"),
+        // Additional manga fields from Komikku
+        notes: text("notes"),
+        excludedScanlators: text("excluded_scanlators").array(),
+        initialized: boolean("initialized").default(false),
+        favoriteModifiedAt: timestamp("favorite_modified_at"),
         // Sync metadata
         lastModifiedAt: timestamp("last_modified_at").defaultNow().notNull(),
         version: integer("version").default(1).notNull(),
@@ -220,6 +226,7 @@ export const tracking = pgTable(
         status: integer("status").default(0),
         startedReadingDate: timestamp("started_reading_date"),
         finishedReadingDate: timestamp("finished_reading_date"),
+        private: boolean("private").default(false),
     },
     (table) => [index("tracking_manga_idx").on(table.mangaId)]
 );
@@ -279,6 +286,63 @@ export const sourcePreferences = pgTable(
 );
 
 // ============================================================================
+// EXTENSION REPOS (mirrors BackupExtensionRepos)
+// ============================================================================
+
+export const extensionRepos = pgTable(
+    "extension_repos",
+    {
+        id: uuid("id").primaryKey().defaultRandom(),
+        userId: text("user_id")
+            .references(() => users.id, { onDelete: "cascade" })
+            .notNull(),
+        baseUrl: text("base_url").notNull(),
+        name: text("name").notNull(),
+        shortName: text("short_name"),
+        website: text("website"),
+        signingKeyFingerprint: text("signing_key_fingerprint"),
+    },
+    (table) => [index("extension_repos_user_idx").on(table.userId)]
+);
+
+// ============================================================================
+// SAVED SEARCHES (SY feature - mirrors BackupSavedSearch)
+// ============================================================================
+
+export const savedSearches = pgTable(
+    "saved_searches",
+    {
+        id: uuid("id").primaryKey().defaultRandom(),
+        userId: text("user_id")
+            .references(() => users.id, { onDelete: "cascade" })
+            .notNull(),
+        name: text("name").notNull(),
+        source: bigint("source", { mode: "number" }).notNull(),
+        query: text("query"),
+        filterList: jsonb("filter_list"),
+    },
+    (table) => [index("saved_searches_user_idx").on(table.userId)]
+);
+
+// ============================================================================
+// FEEDS (KMK feature - mirrors BackupFeed)
+// ============================================================================
+
+export const feeds = pgTable(
+    "feeds",
+    {
+        id: uuid("id").primaryKey().defaultRandom(),
+        userId: text("user_id")
+            .references(() => users.id, { onDelete: "cascade" })
+            .notNull(),
+        source: bigint("source", { mode: "number" }).notNull(),
+        savedSearchId: bigint("saved_search_id", { mode: "number" }),
+        global: boolean("global").default(true),
+    },
+    (table) => [index("feeds_user_idx").on(table.userId)]
+);
+
+// ============================================================================
 // BACKUPS & SYNC
 // ============================================================================
 
@@ -333,6 +397,9 @@ export const usersRelations = relations(users, ({ many }) => ({
     categories: many(categories),
     preferences: many(preferences),
     sourcePreferences: many(sourcePreferences),
+    extensionRepos: many(extensionRepos),
+    savedSearches: many(savedSearches),
+    feeds: many(feeds),
     backups: many(backups),
     syncHistory: many(syncHistory),
 }));
@@ -380,3 +447,22 @@ export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
     user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
 }));
 
+export const extensionReposRelations = relations(extensionRepos, ({ one }) => ({
+    user: one(users, { fields: [extensionRepos.userId], references: [users.id] }),
+}));
+
+export const savedSearchesRelations = relations(savedSearches, ({ one }) => ({
+    user: one(users, { fields: [savedSearches.userId], references: [users.id] }),
+}));
+
+export const feedsRelations = relations(feeds, ({ one }) => ({
+    user: one(users, { fields: [feeds.userId], references: [users.id] }),
+}));
+
+export const preferencesRelations = relations(preferences, ({ one }) => ({
+    user: one(users, { fields: [preferences.userId], references: [users.id] }),
+}));
+
+export const sourcePreferencesRelations = relations(sourcePreferences, ({ one }) => ({
+    user: one(users, { fields: [sourcePreferences.userId], references: [users.id] }),
+}));
