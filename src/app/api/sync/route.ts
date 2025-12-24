@@ -54,93 +54,99 @@ export async function POST(request: NextRequest) {
         let chaptersSynced = 0;
 
         // Process manga
+        const failedManga: string[] = [];
         if (Array.isArray(mangaList)) {
             for (const m of mangaList) {
-                const existing = await db.query.manga.findFirst({
-                    where: and(
-                        eq(manga.userId, userId),
-                        eq(manga.source, m.source),
-                        eq(manga.url, m.url)
-                    ),
-                });
+                try {
+                    const existing = await db.query.manga.findFirst({
+                        where: and(
+                            eq(manga.userId, userId),
+                            eq(manga.source, m.source),
+                            eq(manga.url, m.url)
+                        ),
+                    });
 
-                let mangaId: string;
+                    let mangaId: string;
 
-                if (existing) {
-                    await db.update(manga)
-                        .set({
-                            title: m.title,
-                            artist: m.artist,
-                            author: m.author,
-                            description: m.description,
-                            genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
-                            status: m.status ?? 0,
-                            thumbnailUrl: m.thumbnailUrl,
-                            favorite: m.favorite ?? true,
-                            viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
-                            chapterFlags: m.chapterFlags ?? 0,
-                            lastModifiedAt: new Date(),
-                            version: existing.version + 1,
-                        })
-                        .where(eq(manga.id, existing.id));
-                    mangaId = existing.id;
-                } else {
-                    const [inserted] = await db.insert(manga)
-                        .values({
-                            userId,
-                            source: m.source,
-                            url: m.url,
-                            title: m.title,
-                            artist: m.artist,
-                            author: m.author,
-                            description: m.description,
-                            genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
-                            status: m.status ?? 0,
-                            thumbnailUrl: m.thumbnailUrl,
-                            favorite: m.favorite ?? true,
-                            dateAdded: m.dateAdded ? new Date(m.dateAdded) : new Date(),
-                            viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
-                            chapterFlags: m.chapterFlags ?? 0,
-                        })
-                        .returning();
-                    mangaId = inserted.id;
-                }
-                mangaSynced++;
+                    if (existing) {
+                        await db.update(manga)
+                            .set({
+                                title: m.title,
+                                artist: m.artist,
+                                author: m.author,
+                                description: m.description,
+                                genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
+                                status: m.status ?? 0,
+                                thumbnailUrl: m.thumbnailUrl,
+                                favorite: m.favorite ?? true,
+                                viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
+                                chapterFlags: m.chapterFlags ?? 0,
+                                lastModifiedAt: new Date(),
+                                version: existing.version + 1,
+                            })
+                            .where(eq(manga.id, existing.id));
+                        mangaId = existing.id;
+                    } else {
+                        const [inserted] = await db.insert(manga)
+                            .values({
+                                userId,
+                                source: m.source,
+                                url: m.url,
+                                title: m.title,
+                                artist: m.artist,
+                                author: m.author,
+                                description: m.description,
+                                genres: Array.isArray(m.genres) ? m.genres : (Array.isArray(m.genre) ? m.genre : (typeof m.genre === "string" ? m.genre.split(", ") : [])),
+                                status: m.status ?? 0,
+                                thumbnailUrl: m.thumbnailUrl,
+                                favorite: m.favorite ?? true,
+                                dateAdded: m.dateAdded ? new Date(m.dateAdded) : new Date(),
+                                viewerFlags: m.viewer_flags ?? m.viewerFlags ?? -1,
+                                chapterFlags: m.chapterFlags ?? 0,
+                            })
+                            .returning();
+                        mangaId = inserted.id;
+                    }
+                    mangaSynced++;
 
-                // Process chapters
-                if (m.chapters && Array.isArray(m.chapters)) {
-                    for (const ch of m.chapters) {
-                        const existingChapter = await db.query.chapters.findFirst({
-                            where: and(
-                                eq(chapters.mangaId, mangaId),
-                                eq(chapters.url, ch.url)
-                            ),
-                        });
+                    // Process chapters
+                    if (m.chapters && Array.isArray(m.chapters)) {
+                        for (const ch of m.chapters) {
+                            const existingChapter = await db.query.chapters.findFirst({
+                                where: and(
+                                    eq(chapters.mangaId, mangaId),
+                                    eq(chapters.url, ch.url)
+                                ),
+                            });
 
-                        if (existingChapter) {
-                            await db.update(chapters)
-                                .set({
+                            if (existingChapter) {
+                                await db.update(chapters)
+                                    .set({
+                                        read: ch.read ?? false,
+                                        bookmark: ch.bookmark ?? false,
+                                        lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? 0,
+                                        lastModifiedAt: new Date(),
+                                    })
+                                    .where(eq(chapters.id, existingChapter.id));
+                            } else {
+                                await db.insert(chapters).values({
+                                    mangaId,
+                                    url: ch.url,
+                                    name: ch.name,
+                                    scanlator: ch.scanlator,
+                                    chapterNumber: ch.chapterNumber ?? ch.chapter_number ?? 0,
                                     read: ch.read ?? false,
                                     bookmark: ch.bookmark ?? false,
                                     lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? 0,
-                                    lastModifiedAt: new Date(),
-                                })
-                                .where(eq(chapters.id, existingChapter.id));
-                        } else {
-                            await db.insert(chapters).values({
-                                mangaId,
-                                url: ch.url,
-                                name: ch.name,
-                                scanlator: ch.scanlator,
-                                chapterNumber: ch.chapterNumber ?? ch.chapter_number ?? 0,
-                                read: ch.read ?? false,
-                                bookmark: ch.bookmark ?? false,
-                                lastPageRead: ch.lastPageRead ?? ch.last_page_read ?? 0,
-                                pagesLeft: ch.pagesLeft ?? ch.pages_left ?? 0,
-                            });
+                                    pagesLeft: ch.pagesLeft ?? ch.pages_left ?? 0,
+                                });
+                            }
+                            chaptersSynced++;
                         }
-                        chaptersSynced++;
                     }
+                } catch (e) {
+                    console.error(`Failed to process manga ${m.title}:`, e);
+                    failedManga.push(m.title);
                 }
             }
         }
