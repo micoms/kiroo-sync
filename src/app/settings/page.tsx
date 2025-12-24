@@ -4,16 +4,39 @@ import { DashboardLayout } from "@/components/dashboard/layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Separator } from "@/components/ui/separator";
 import { useSession, signOut } from "@/lib/auth-client";
-import { Loader2, LogOut, Settings as SettingsIcon, Shield, User } from "lucide-react";
+import { Loader2, LogOut, Settings as SettingsIcon, Shield, User, Trash2, AlertTriangle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { trpc } from "@/lib/trpc/client";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export default function SettingsPage() {
     const { data: session, isPending } = useSession();
     const router = useRouter();
     const [isSigningOut, setIsSigningOut] = useState(false);
+    const [isResetting, setIsResetting] = useState(false);
+
+    const resetData = trpc.data.resetAllData.useMutation({
+        onSuccess: () => {
+            setIsResetting(false);
+            router.refresh();
+        },
+        onError: (error) => {
+            console.error("Failed to reset data:", error);
+            setIsResetting(false);
+        },
+    });
 
     const handleSignOut = async () => {
         setIsSigningOut(true);
@@ -30,6 +53,11 @@ export default function SettingsPage() {
         } finally {
             setIsSigningOut(false);
         }
+    };
+
+    const handleResetData = async () => {
+        setIsResetting(true);
+        resetData.mutate();
     };
 
     if (isPending) {
@@ -125,19 +153,65 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* App Settings Placeholder */}
-                <Card>
+                {/* Danger Zone */}
+                <Card className="border-destructive/50">
                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <SettingsIcon className="h-5 w-5" />
-                            App Preferences
+                        <CardTitle className="flex items-center gap-2 text-destructive">
+                            <AlertTriangle className="h-5 w-5" />
+                            Danger Zone
                         </CardTitle>
-                        <CardDescription>Customize your dashboard experience</CardDescription>
+                        <CardDescription>Irreversible actions - proceed with caution</CardDescription>
                     </CardHeader>
-                    <CardContent>
-                        <p className="text-sm text-muted-foreground italic">
-                            Additional preferences coming soon...
-                        </p>
+                    <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                                <h4 className="font-medium">Reset All Data</h4>
+                                <p className="text-sm text-muted-foreground">
+                                    Delete all synced manga, chapters, history, and preferences
+                                </p>
+                            </div>
+                            <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="destructive" disabled={isResetting}>
+                                        {isResetting ? (
+                                            <>
+                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                Resetting...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                Reset Data
+                                            </>
+                                        )}
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                            This will permanently delete all your synced data including:
+                                            <ul className="list-disc list-inside mt-2 space-y-1">
+                                                <li>All manga and chapters</li>
+                                                <li>Reading history and tracking</li>
+                                                <li>Categories and preferences</li>
+                                                <li>Sync history and backups</li>
+                                            </ul>
+                                            <p className="mt-2 font-medium">This action cannot be undone.</p>
+                                        </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction
+                                            onClick={handleResetData}
+                                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                        >
+                                            Yes, delete everything
+                                        </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                        </div>
                     </CardContent>
                 </Card>
 

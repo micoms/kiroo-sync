@@ -103,4 +103,27 @@ export const dataRouter = router({
             sourcePreferences: sourcePrefs.length,
         };
     }),
+
+    // ============================================================================
+    // Reset All Data
+    // ============================================================================
+    resetAllData: protectedProcedure.mutation(async ({ ctx }) => {
+        const userId = ctx.session.user.id;
+
+        // Import additional tables needed for deletion
+        const { manga, syncHistory, backups } = await import("@/lib/db/schema");
+
+        // Delete manga first - foreign keys with cascade will handle related data
+        await ctx.db.delete(manga).where(eq(manga.userId, userId));
+        await ctx.db.delete(categories).where(eq(categories.userId, userId));
+        await ctx.db.delete(extensionRepos).where(eq(extensionRepos.userId, userId));
+        await ctx.db.delete(savedSearches).where(eq(savedSearches.userId, userId));
+        await ctx.db.delete(feeds).where(eq(feeds.userId, userId));
+        await ctx.db.delete(preferences).where(eq(preferences.userId, userId));
+        await ctx.db.delete(sourcePreferences).where(eq(sourcePreferences.userId, userId));
+        await ctx.db.delete(syncHistory).where(eq(syncHistory.userId, userId));
+        await ctx.db.delete(backups).where(eq(backups.userId, userId));
+
+        return { success: true };
+    }),
 });
