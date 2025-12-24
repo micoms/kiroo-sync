@@ -1,6 +1,6 @@
 "use client";
 
-import { Book, History, Key, LayoutDashboard, Archive, Settings, LogOut } from "lucide-react";
+import { Book, History, Key, LayoutDashboard, Archive, Settings, LogOut, Database } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,7 @@ import {
 const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Library", href: "/library", icon: Book },
+    { name: "Synced Data", href: "/data", icon: Database },
     { name: "Backups", href: "/backups", icon: Archive },
     { name: "Sync History", href: "/history", icon: History },
     { name: "API Keys", href: "/api-keys", icon: Key },
