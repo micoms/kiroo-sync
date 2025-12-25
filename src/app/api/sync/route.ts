@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
+import { gunzipSync, gzipSync } from "zlib";
 import { db } from "@/lib/db";
 import {
     apiKeys, manga, chapters, categories, tracking, history, syncHistory,
@@ -46,7 +47,16 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-        const body = await request.json();
+        // Handle gzip compressed requests
+        const contentEncoding = request.headers.get("content-encoding");
+        let body;
+        if (contentEncoding === "gzip") {
+            const buffer = await request.arrayBuffer();
+            const decompressed = gunzipSync(Buffer.from(buffer));
+            body = JSON.parse(decompressed.toString());
+        } else {
+            body = await request.json();
+        }
         const userId = keyRecord.userId;
         const backup = body.backup || body; // Handle wrapped or unwrapped
 
@@ -570,7 +580,9 @@ export async function GET(request: NextRequest) {
             }
         });
 
-        return NextResponse.json({
+        // Check if client accepts gzip
+        const acceptEncoding = request.headers.get("accept-encoding") || "";
+        const responseData = {
             backupManga: mangaList.map((m) => ({
                 source: m.source,
                 url: m.url,
@@ -627,7 +639,21 @@ export async function GET(request: NextRequest) {
                 sourceId,
                 name,
             })),
-        });
+        };
+
+        // Return gzip compressed if client accepts it
+        if (acceptEncoding.includes("gzip")) {
+            const jsonString = JSON.stringify(responseData);
+            const compressed = gzipSync(Buffer.from(jsonString));
+            return new Response(compressed, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Content-Encoding": "gzip",
+                },
+            });
+        }
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error("Sync pull error:", error);
         return NextResponse.json(
